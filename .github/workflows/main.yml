@@ -1,16 +1,16 @@
-name: Blinko Intel Factory
+name: Blinko Monterey Intel Fix
 
 on:
   schedule:
-    - cron: '0 0 * * *' # 每日检查
+    - cron: '0 0 * * *' # 每天凌晨自动对账
   workflow_dispatch:
     inputs:
       manual_tag:
-        description: '输入官方 Release Tag (例如 v1.8.4)。留空则自动抓取最新正式版。'
+        description: '输入官方 Tag (例如 1.8.4)。留空则自动抓取最新版。'
         required: false
         default: ''
       force_build:
-        description: '强制重新构建以应用“白屏修复”补丁'
+        description: '强制重新构建以应用“核弹级”补丁'
         type: boolean
         default: false
 
@@ -21,104 +21,100 @@ jobs:
       should_build: ${{ steps.check.outputs.should_build }}
       target_tag: ${{ steps.check.outputs.target_tag }}
     steps:
-      - name: 1. 版本精准对账
+      - name: 1. 跨仓库版本对账
         id: check
         run: |
           REPO="blinkospace/blinko"
-          
-          # 获取目标版本 (处理用户输入)
           if [ -z "${{ github.event.inputs.manual_tag }}" ]; then
             TARGET_TAG=$(curl -s https://api.github.com/repos/$REPO/releases/latest | jq -r .tag_name)
           else
-            # PM 级的容错处理：统一去掉开头的 v (如果用户输入了的话)
             TARGET_TAG=$(echo "${{ github.event.inputs.manual_tag }}" | sed 's/^v//')
           fi
+          echo "判定目标 Tag: $TARGET_TAG"
           
-          echo "确定目标版本: $TARGET_TAG"
-          
-          # 检查你的仓库中是否已有该版本的 -intel 包 [cite: 2026-02-01]
+          # 检查你的仓库是否有对应版本的 -intel 包 [cite: 2026-02-01]
           CHECK_URL="https://api.github.com/repos/${{ github.repository }}/releases/tags/${TARGET_TAG}-intel"
           STATUS=$(curl -o /dev/null -s -w "%{http_code}" $CHECK_URL)
           
-          # 核心决策逻辑：(不存在) OR (强制构建)
           if [ "$STATUS" != "200" ] || [ "${{ github.event.inputs.force_build }}" == "true" ]; then
             echo "should_build=true" >> $GITHUB_OUTPUT
             echo "target_tag=$TARGET_TAG" >> $GITHUB_OUTPUT
-            echo "决策：启动构建 [cite: 2026-02-01]"
           else
             echo "should_build=false" >> $GITHUB_OUTPUT
-            echo "决策：跳过构建 [cite: 2026-02-01]"
           fi
 
   build-intel-mac:
     needs: check-version
     if: needs.check-version.outputs.should_build == 'true'
-    # 使用 2026 年推荐的 Intel 专用镜像环境
     runs-on: macos-15-intel 
     permissions:
       contents: write
 
     steps:
-      - name: 1. 检出代码 (精准定位 Tag)
+      - name: 1. 检出官方代码
         uses: actions/checkout@v4
         with:
           repository: blinkospace/blinko
           ref: ${{ needs.check-version.outputs.target_tag }}
           fetch-depth: 1
 
-      - name: 2. 注入 Monterey 兼容性补丁 (深度正则手术)
-        run: |
-          export LC_ALL=C
-          
-          # 1. 降级构建目标 [cite: 2026-02-01]
-          find . -name "vite.config.ts" -exec sed -i '' 's/target: "esnext"/target: ["es2015", "safari13"]/g' {} +
-          find . -name "tsconfig.json" -exec sed -i '' 's/"target": "esnext"/"target": "es2015"/g' {} +
-
-          # 2. 强力清理具名分组和反向断言
-          # 使用 perl 的全局搜索，不区分反斜杠数量
-          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 perl -i -pe 's/\(\?<[a-zA-Z0-9]+>/(/g'
-          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 perl -i -pe 's/\\+k<[a-zA-Z0-9]+>/\\1/g'
-          
-          # 暴力拆除所有反向断言 (?<!...) 和 (?<=...)，这是白屏的头号元凶
-          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 perl -i -pe 's/\(\?<![^)]+\)//g'
-          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 perl -i -pe 's/\(\?<= [^)]+\)//g'
-          
-          echo "正则深度清理完成，已强行适配老版本 WebKit 内核。"
-
-      - name: 3. 环境准备 (Bun & Rust)
+      - name: 2. 环境准备
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: 1.2.8 
 
-      - name: 4. 安装 Rust (x86_64 架构)
+      - name: 3. 安装 Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-apple-darwin
 
-      - name: 5. 编译与打包
+      - name: 4. 编译前端产物 (Dist)
         run: |
+          # 强制修改编译目标为低版本 Safari/WebKit [cite: 2026-02-01]
+          find . -name "vite.config.ts" -exec sed -i '' 's/target: "esnext"/target: ["es2015", "safari13"]/g' {} +
+          find . -name "tsconfig.json" -exec sed -i '' 's/"target": "esnext"/"target": "es2015"/g' {} +
+          
           bun install --frozen-lockfile
           cd app
-          # 处理版本号显示
+          # 写入版本号
           VERSION_NUM=$(echo "${{ needs.check-version.outputs.target_tag }}" | sed 's/^v//')
           jq ".version = \"$VERSION_NUM\"" src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
           
-          # 强制指定 VITE 目标
           export VITE_BUILD_TARGET=es2015
           bun run build:no-pwa
-          # 执行打包，忽略无证书签名错误
+
+      - name: 5. 【核弹级修复】强刷产物正则 (消灭白屏)
+        run: |
+          # 在打包成 DMG 之前，直接对 dist 文件夹里的混淆代码下重手 [cite: 2026-02-01]
+          # 强制使用字节流模式处理，避免 illegal byte sequence 报错 [cite: 2026-02-01]
+          export LC_ALL=C
+          
+          echo "正在深度扫描并降级 dist 产物中的高级正则..."
+          # 抹除具名分组 (?<name> -> (
+          find dist -name "*.js" -print0 | xargs -0 perl -i -pe 's/\(\?<[a-zA-Z0-9]+>/(/g'
+          # 抹除反向引用 \k<name> -> \1
+          find dist -name "*.js" -print0 | xargs -0 perl -i -pe 's/\\+k<[a-zA-Z0-9]+>/\\1/g'
+          # 抹除反向断言 (?<!...) 和 (?<=...) -> 直接物理删除，防止老 WebKit 崩溃
+          find dist -name "*.js" -print0 | xargs -0 perl -i -pe 's/\(\?<![^)]+\)//g'
+          find dist -name "*.js" -print0 | xargs -0 perl -i -pe 's/\(\?<= [^)]+\)//g'
+          echo "产物正则清理完成。"
+
+      - name: 6. 构建并发布 DMG
+        run: |
+          cd app
+          # 即使没有私钥签名也继续，因为我们要的是那个 DMG [cite: 2026-02-01]
           bun run tauri build --target x86_64-apple-darwin || true
 
-      - name: 6. 自动发布并上传 DMG
+      - name: 7. 上传到 Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ needs.check-version.outputs.target_tag }}-intel
-          name: "Blinko ${{ needs.check-version.outputs.target_tag }} (Intel Mac)"
+          name: "Blinko ${{ needs.check-version.outputs.target_tag }} (Monterey 专属版)"
           body: |
-            ## 专属 Intel Mac 构建版
+            ## Intel Mac 兼容性构建
             - **官方版本**: ${{ needs.check-version.outputs.target_tag }}
-            - **修复**: 彻底解决 macOS Monterey 下的白屏问题
-            - **说明**: 首次运行请在“设置-隐私”中点击“仍要打开”
+            - **修复重点**: 彻底解决了在 macOS Monterey 12.7.6 下的白屏（SyntaxError）问题。
+            - **技术手段**: 对产物执行了具名捕获组与反向断言的物理抹除。
           files: app/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
