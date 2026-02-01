@@ -65,21 +65,25 @@ jobs:
 
       - name: 2. 注入 Monterey 兼容性补丁 (深度正则修复)
         run: |
+          # 强制设置 Locale 为 C，防止处理非 ASCII 字符时报错 [cite: 2026-02-01]
+          export LC_ALL=C
+          
           # 1. 降级 Vite 和 TS 目标
           find . -name "vite.config.ts" -exec sed -i '' 's/target: "esnext"/target: ["es2015", "safari13"]/g' {} +
           find . -name "tsconfig.json" -exec sed -i '' 's/"target": "esnext"/"target": "es2015"/g' {} +
 
           # 2. 修复源码中的高级正则语法
-          # 将具名捕获组 (?<a> 和 (?<b> 替换为普通捕获组 (
-          # 将反向引用 \k<a> 替换为普通引用 \1
-          # 将反向断言 (?<!`) 替换为空（这是老 WebKit 崩溃的主因）
-          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 sed -i '' 's/(?<a>/(/g'
-          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 sed -i '' 's/\\k<a>/\\1/g'
-          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 sed -i '' 's/(?<b>/(/g'
-          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 sed -i '' 's/\\k<b>/\\1/g'
-          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 sed -i '' 's/(?<!\\`)/ /g'
+          # 这里改用 perl，因为它在 macOS 下对正则字符串的支持比 sed 更健壮
+          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 perl -i -pe 's/\Q(?<a>\E/(/g'
+          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 perl -i -pe 's/\\k<a>/\\1/g'
+          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 perl -i -pe 's/\Q(?<b>\E/(/g'
+          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 perl -i -pe 's/\\k<b>/\\1/g'
           
-          echo "正则深度清理完成，已适配老版本 WebKit。"
+          # 特别针对反向断言 (?<!`) 的修复：将其直接删除
+          # 它是导致老版本 WebKit 崩溃的主因
+          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 perl -i -pe 's/\(\?\<\!\\`\)//g'
+          
+          echo "正则深度清理完成，已适配 Monterey 环境。"
 
       - name: 3. 环境准备 (Bun & Rust)
         uses: oven-sh/setup-bun@v1
