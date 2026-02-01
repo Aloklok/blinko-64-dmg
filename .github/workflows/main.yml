@@ -2,15 +2,15 @@ name: Blinko Intel Smart Builder
 
 on:
   schedule:
-    - cron: '0 0 * * *' # 每天凌晨自动运行一次
+    - cron: '0 0 * * *' 
   workflow_dispatch:
     inputs:
-      manual_tag:
-        description: '手动指定要构建的官方 Tag (例如 v1.8.4)，留空则自动抓取最新版'
+      manual_version:
+        description: '输入官方 Release 的 Tag (例如 1.8.4 或 v1.8.4)。留空则自动抓取最新正式版。'
         required: false
         default: ''
       force_build:
-        description: '是否强制重新构建？'
+        description: '强制重新构建当前版本'
         type: boolean
         default: false
 
@@ -21,42 +21,43 @@ jobs:
       should_build: ${{ steps.check.outputs.should_build }}
       target_tag: ${{ steps.check.outputs.target_tag }}
     steps:
-      - name: 1. 自动比对版本
+      - name: 1. 跨仓库版本对账
         id: check
         run: |
-          # 如果手动输入了版本，则以手动的为准，否则抓取原仓库最新的 Release Tag
-          if [ -n "${{ github.event.inputs.manual_tag }}" ]; then
-            TARGET_TAG="${{ github.event.inputs.manual_tag }}"
+          # 明确指向你提供的官方仓库 [cite: 2026-02-01]
+          REPO="blinkospace/blinko"
+          
+          if [ -z "${{ github.event.inputs.manual_version }}" ]; then
+            # 仅获取最新的 Release Tag，完全不看 Branch [cite: 2026-02-01]
+            TARGET_TAG=$(curl -s https://api.github.com/repos/$REPO/releases/latest | jq -r .tag_name)
           else
-            TARGET_TAG=$(curl -s https://api.github.com/repos/blinkospace/blinko/releases/latest | jq -r .tag_name)
+            # 手动指定时，自动补全 v 前缀
+            INPUT="${{ github.event.inputs.manual_version }}"
+            [[ $INPUT != v* ]] && TARGET_TAG="v$INPUT" || TARGET_TAG="$INPUT"
           fi
           
-          echo "目标版本: $TARGET_TAG"
+          echo "判定目标 Tag: $TARGET_TAG"
           
-          # 检查你自己的仓库中是否已存在该版本的 -intel 安装包
-          # 注意：请将下面的 YOUR_USERNAME/YOUR_REPO 替换为你现在的这个仓库路径
+          # 检查你的仓库是否已有该版本的 Intel 包 [cite: 2026-02-01]
           CHECK_URL="https://api.github.com/repos/${{ github.repository }}/releases/tags/${TARGET_TAG}-intel"
           STATUS=$(curl -o /dev/null -s -w "%{http_code}" $CHECK_URL)
           
           if [ "$STATUS" != "200" ] || [ "${{ github.event.inputs.force_build }}" == "true" ]; then
             echo "should_build=true" >> $GITHUB_OUTPUT
             echo "target_tag=$TARGET_TAG" >> $GITHUB_OUTPUT
-            echo "状态: 需要构建新版本"
           else
             echo "should_build=false" >> $GITHUB_OUTPUT
-            echo "状态: 版本已存在，跳过"
           fi
 
   build-intel-mac:
     needs: check-version
     if: needs.check-version.outputs.should_build == 'true'
-    # 使用 2026 年推荐的 Intel 专用镜像
     runs-on: macos-15-intel 
     permissions:
       contents: write
 
     steps:
-      - name: 1. 检出代码 (直接指向官方 Tag)
+      - name: 1. 检出官方代码 (通过 Tag 定位)
         uses: actions/checkout@v4
         with:
           repository: blinkospace/blinko
@@ -65,46 +66,32 @@ jobs:
 
       - name: 2. 注入 Monterey 兼容性补丁 (解决白屏)
         run: |
-          # 针对 2017 款 MBP 的 Monterey (12.7.6) 系统进行降级处理
-          # 修复正则命名分组导致的 SyntaxError
-          find . -name "vite.config.ts" -exec sed -i '' 's/target: "esnext"/target: ["es2015", "safari13"]/g' {} +
-          find . -name "tsconfig.json" -exec sed -i '' 's/"target": "esnext"/"target": "es2015"/g' {} +
-          echo "补丁已应用：已将构建目标设为 es2015"
+          # 强制将构建目标从 esnext 降级为 es2015
+          # 解决 2017 款 MBP (12.7.6) 的正则解析报错
+          find . -maxdepth 4 -name "vite.config.ts" -exec sed -i '' 's/target: "esnext"/target: ["es2015", "safari13"]/g' {} +
+          find . -maxdepth 4 -name "tsconfig.json" -exec sed -i '' 's/"target": "esnext"/"target": "es2015"/g' {} +
 
-      - name: 3. 环境准备
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: 1.2.8 
-
-      - name: 4. 安装 Rust (x86_64)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-apple-darwin
-
-      - name: 5. 编译与打包
+      - name: 3. 构建与打包
         run: |
           bun install --frozen-lockfile
           cd app
-          # 注入不带 v 的版本号
+          # 写入版本号并执行低版本兼容构建 [cite: 2026-02-01]
           VERSION_NUM=$(echo "${{ needs.check-version.outputs.target_tag }}" | sed 's/^v//')
           jq ".version = \"$VERSION_NUM\"" src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
           
           export VITE_BUILD_TARGET=es2015
           bun run build:no-pwa
-          # 忽略签名报错继续运行
           bun run tauri build --target x86_64-apple-darwin || true
 
-      - name: 6. 创建 Release 并上传
+      - name: 4. 自动发布 Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ needs.check-version.outputs.target_tag }}-intel
-          name: "Blinko ${{ needs.check-version.outputs.target_tag }} (Intel Mac 版)"
+          name: "Blinko ${{ needs.check-version.outputs.target_tag }} (Intel Mac)"
           body: |
-            自动构建完成。
-            - 适配系统：macOS Monterey (12.7.6)
-            - 修复了白屏 SyntaxError 问题
-            - 架构：Intel x86_64
-          files: |
-            app/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+            Blinko 官方 Release 版本：${{ needs.check-version.outputs.target_tag }}
+            - 适配环境：macOS Monterey 12.7.6
+            - 修复问题：白屏 SyntaxError (正则命名分组)
+          files: app/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
