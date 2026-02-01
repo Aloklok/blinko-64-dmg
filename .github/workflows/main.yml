@@ -58,6 +58,17 @@ jobs:
           ref: ${{ needs.check-version.outputs.target_tag }}
           fetch-depth: 1
 
+      - name: 1.1 检出 Monterey 补丁
+        uses: actions/checkout@v4
+        with:
+          path: monterey-fix-repo
+          sparse-checkout: |
+            monterey-fix
+
+      - name: 1.2 注入 Monterey 专属兼容性补丁
+        run: |
+          bash monterey-fix-repo/monterey-fix/install.sh
+
       - name: 2. 环境准备
         uses: oven-sh/setup-bun@v1
         with:
@@ -70,34 +81,18 @@ jobs:
 
       - name: 4. 编译前端产物 (Dist)
         run: |
-          # 强制修改编译目标为低版本 Safari/WebKit [cite: 2026-02-01]
-          find . -name "vite.config.ts" -exec sed -i '' 's/target: "esnext"/target: ["es2015", "safari13"]/g' {} +
-          find . -name "tsconfig.json" -exec sed -i '' 's/"target": "esnext"/"target": "es2015"/g' {} +
-          
           bun install --frozen-lockfile
           cd app
           # 写入版本号
           VERSION_NUM=$(echo "${{ needs.check-version.outputs.target_tag }}" | sed 's/^v//')
           jq ".version = \"$VERSION_NUM\"" src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
           
-          export VITE_BUILD_TARGET=es2015
           bun run build:no-pwa
 
-      - name: 5. 【核弹级修复】强刷产物正则 (消灭白屏)
+      - name: 5. 清理补丁临时文件
         run: |
-          # 在打包成 DMG 之前，直接对 dist 文件夹里的混淆代码下重手 [cite: 2026-02-01]
-          # 强制使用字节流模式处理，避免 illegal byte sequence 报错 [cite: 2026-02-01]
-          export LC_ALL=C
-          
-          echo "正在深度扫描并降级 dist 产物中的高级正则..."
-          # 抹除具名分组 (?<name> -> (
-          find dist -name "*.js" -print0 | xargs -0 perl -i -pe 's/\(\?<[a-zA-Z0-9]+>/(/g'
-          # 抹除反向引用 \k<name> -> \1
-          find dist -name "*.js" -print0 | xargs -0 perl -i -pe 's/\\+k<[a-zA-Z0-9]+>/\\1/g'
-          # 抹除反向断言 (?<!...) 和 (?<=...) -> 直接物理删除，防止老 WebKit 崩溃
-          find dist -name "*.js" -print0 | xargs -0 perl -i -pe 's/\(\?<![^)]+\)//g'
-          find dist -name "*.js" -print0 | xargs -0 perl -i -pe 's/\(\?<= [^)]+\)//g'
-          echo "产物正则清理完成。"
+          rm -rf monterey-fix-repo
+          echo "补丁已集成至构建产物，临时文件已清理。"
 
       - name: 6. 构建并发布 DMG
         run: |

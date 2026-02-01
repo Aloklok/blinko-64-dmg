@@ -1,0 +1,166 @@
+diff --git a/app/src/components/Layout/index.tsx b/app/src/components/Layout/index.tsx
+index adfdb551..638f51d9 100644
+--- a/app/src/components/Layout/index.tsx
++++ b/app/src/components/Layout/index.tsx
+@@ -83,13 +83,16 @@ export const CommonLayout = observer(({ children, header }: { children?: React.R
+     <div className={`flex w-full h-mobile-full overflow-x-hidden`} id="outer-container">
+       <AiWritePop />
+ 
+-      <Menu style={{
+-        bmMenuWrap: {
+-          transition: 'all .3s'
+-        }
+-      }} disableAutoFocus onClose={() => setisOpen(false)} onOpen={setisOpen} isOpen={isOpen} pageWrapId={'page-wrap'} outerContainerId={'outer-container'}>
+-        <Sidebar onItemClick={() => setisOpen(false)} />
+-      </Menu>
++      {/* 延迟渲染 Menu，确保 outer-container 和 page-wrap 已存在 */}
++      {isClient && (
++        <Menu style={{
++          bmMenuWrap: {
++            transition: 'all .3s'
++          }
++        }} disableAutoFocus onClose={() => setisOpen(false)} onOpen={setisOpen} isOpen={isOpen} pageWrapId={'page-wrap'} outerContainerId={'outer-container'}>
++          <Sidebar onItemClick={() => setisOpen(false)} />
++        </Menu>
++      )}
+ 
+       {isPc && <Sidebar />}
+ 
+@@ -104,7 +107,7 @@ export const CommonLayout = observer(({ children, header }: { children?: React.R
+           style={!isPc ? {
+             position: 'fixed',
+             top: 0,
+-            borderRadius:'0 0 12px 12px',
++            borderRadius: '0 0 12px 12px',
+             zIndex: 11,
+             width: '100%',
+             background: getFixedHeaderBackground(),
+diff --git a/app/src/main.tsx b/app/src/main.tsx
+index c33fd758..93815b1c 100644
+--- a/app/src/main.tsx
++++ b/app/src/main.tsx
+@@ -2,6 +2,21 @@ import ReactDOM from "react-dom/client";
+ import App from "./App";
+ import "./styles/globals.css";
+ 
++/**
++ * Safari 15 Polyfill: AbortSignal.timeout
++ * Safari 15 (macOS Monterey/iOS 15) 不支持 AbortSignal.timeout()
++ * 这个 polyfill 让 TRPC 等库能正常工作
++ */
++if (typeof AbortSignal !== 'undefined' && !AbortSignal.timeout) {
++  AbortSignal.timeout = (ms: number): AbortSignal => {
++    const controller = new AbortController();
++    setTimeout(() => controller.abort(new DOMException('TimeoutError', 'TimeoutError')), ms);
++    return controller.signal;
++  };
++}
++
++
++
+ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+   <App />
+-);
++);
+\ No newline at end of file
+diff --git a/app/src/styles/globals.css b/app/src/styles/globals.css
+index b3a85a43..4a699097 100644
+--- a/app/src/styles/globals.css
++++ b/app/src/styles/globals.css
+@@ -70,7 +70,7 @@
+ html,
+ body {
+   scroll-behavior: smooth;
+-  overflow-y: hidden!important;
++  overflow-y: hidden !important;
+   height: var(--doc-height);
+   overscroll-behavior: none;
+   -webkit-overflow-scrolling: touch;
+@@ -95,17 +95,35 @@ body {
+ .blinko-tag {
+   margin-right: 4px;
+   margin-left: 4px;
+-  color: var(--primary) !important;
+-  background-color: color-mix(in srgb, var(--primary) 10%, transparent);
++  /* 根据用户要求，设置字体为白色 */
++  color: white !important;
++  /* Safari 15 fallback: 使用较深的半透明背景以支撑白色字体 */
++  background-color: rgba(0, 0, 0, 0.4);
+   border-radius: 7px;
+   font-size: 13px;
+   padding: 3px;
+   text-decoration: none !important;
+ }
+ 
++/* Dark 模式下的 fallback */
++.dark .blinko-tag {
++  background-color: rgba(255, 255, 255, 0.2);
++}
++
++/* 支持 color-mix 的浏览器使用更精确的颜色（如果用户希望在支持的浏览器上也用白色字体，可以保留下面） */
++@supports (background-color: color-mix(in srgb, red 50%, blue)) {
++  .blinko-tag {
++    /* 如果用户希望所有浏览器都用白色字体，这里也可以覆盖 */
++    color: white !important;
++    background-color: color-mix(in srgb, var(--primary) 40%, transparent);
++  }
++}
++
++
+ .blinko-reference {
+-  border: 2px solid color-mix(in srgb, var(--primary) 20%, transparent);
+-  background-color: color-mix(in srgb, var(--primary) 10%, transparent);
++  /* Safari 15 fallback: light 模式 --primary 是 black */
++  border: 2px solid rgba(0, 0, 0, 0.2);
++  background-color: rgba(0, 0, 0, 0.1);
+   border-radius: 7px;
+   font-size: 13px;
+   padding: 4px;
+@@ -113,8 +131,30 @@ body {
+   transition: all 0.3s;
+ }
+ 
++/* Dark 模式 fallback */
++.dark .blinko-reference {
++  border: 2px solid rgba(249, 249, 249, 0.2);
++  background-color: rgba(249, 249, 249, 0.1);
++}
++
+ .blinko-reference:hover {
+-  background-color: color-mix(in srgb, var(--primary) 20%, transparent);
++  background-color: rgba(0, 0, 0, 0.2);
++}
++
++.dark .blinko-reference:hover {
++  background-color: rgba(249, 249, 249, 0.2);
++}
++
++/* 支持 color-mix 的浏览器使用更精确的颜色 */
++@supports (background-color: color-mix(in srgb, red 50%, blue)) {
++  .blinko-reference {
++    border: 2px solid color-mix(in srgb, var(--primary) 20%, transparent);
++    background-color: color-mix(in srgb, var(--primary) 10%, transparent);
++  }
++
++  .blinko-reference:hover {
++    background-color: color-mix(in srgb, var(--primary) 20%, transparent);
++  }
+ }
+ 
+ 
+@@ -302,7 +342,14 @@ body {
+ }
+ 
+ ::-webkit-scrollbar-thumb:hover {
+-  background: color-mix(in srgb, var(--primary) 80%, transparent);
++  /* Safari 15 fallback */
++  background: rgba(128, 128, 128, 0.8);
++}
++
++@supports (background-color: color-mix(in srgb, red 50%, blue)) {
++  ::-webkit-scrollbar-thumb:hover {
++    background: color-mix(in srgb, var(--primary) 80%, transparent);
++  }
+ }
+ 
+ .hide-scrollbar {
