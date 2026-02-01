@@ -63,13 +63,23 @@ jobs:
           ref: ${{ needs.check-version.outputs.target_tag }}
           fetch-depth: 1
 
-      - name: 2. 注入 Monterey 兼容性补丁 (解决白屏)
+      - name: 2. 注入 Monterey 兼容性补丁 (深度正则修复)
         run: |
-          # 针对 Monterey 的 WebKit 报错进行代码降级
-          # 将所有 esnext 目标替换为 es2015，消除高级正则语法
+          # 1. 降级 Vite 和 TS 目标
           find . -name "vite.config.ts" -exec sed -i '' 's/target: "esnext"/target: ["es2015", "safari13"]/g' {} +
           find . -name "tsconfig.json" -exec sed -i '' 's/"target": "esnext"/"target": "es2015"/g' {} +
-          echo "补丁应用：已将代码目标降级为 es2015"
+
+          # 2. 修复源码中的高级正则语法
+          # 将具名捕获组 (?<a> 和 (?<b> 替换为普通捕获组 (
+          # 将反向引用 \k<a> 替换为普通引用 \1
+          # 将反向断言 (?<!`) 替换为空（这是老 WebKit 崩溃的主因）
+          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 sed -i '' 's/(?<a>/(/g'
+          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 sed -i '' 's/\\k<a>/\\1/g'
+          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 sed -i '' 's/(?<b>/(/g'
+          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 sed -i '' 's/\\k<b>/\\1/g'
+          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 sed -i '' 's/(?<!\\`)/ /g'
+          
+          echo "正则深度清理完成，已适配老版本 WebKit。"
 
       - name: 3. 环境准备 (Bun & Rust)
         uses: oven-sh/setup-bun@v1
