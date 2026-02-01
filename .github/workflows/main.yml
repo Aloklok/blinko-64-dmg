@@ -1,0 +1,77 @@
+name: Blinko Intel Client Builder
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # 每天北京时间早上 8 点自动运行
+  workflow_dispatch: # 支持你手动点按钮触发
+    inputs:
+      version:
+        description: '想要构建的特定版本号 (例如 1.8.4)'
+        required: false
+        default: 'latest'
+
+jobs:
+  build-intel-mac:
+    # 关键点：强制使用 Intel 芯片的 macOS 13 运行环境
+    runs-on: macos-13 
+    permissions:
+      contents: write
+
+    steps:
+      - name: 1. 获取目标版本号
+        id: get_version
+        run: |
+          if [[ "${{ github.event.inputs.version }}" == "latest" || "${{ github.event.inputs.version }}" == "" ]]; then
+            VERSION=$(curl -s https://api.github.com/repos/blinkospace/blinko/releases/latest | jq -r .tag_name | sed 's/^v//')
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "目标构建版本: $VERSION"
+
+      - name: 2. 拉取官方源码
+        uses: actions/checkout@v4
+        with:
+          repository: blinkospace/blinko
+          ref: v${{ steps.get_version.outputs.VERSION }}
+          fetch-depth: 1
+
+      - name: 3. 安装 Bun 环境
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: 1.2.8 # 保持与官方一致
+
+      - name: 4. 安装 Rust (Intel 架构)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+
+      - name: 5. 注入版本号到配置 (不提交)
+        run: |
+          cd app
+          jq '.version = "${{ steps.get_version.outputs.VERSION }}"' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+
+      - name: 6. 安装依赖与构建前端
+        run: |
+          bun install --frozen-lockfile
+          cd app
+          bun run build:no-pwa
+
+      - name: 7. 执行 Tauri 构建 (无签名模式)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 注意：这里我们故意不传入 TAURI_SIGNING 相关的 Secret
+        with:
+          projectPath: 'app'
+          args: '--target x86_64-apple-darwin'
+          # 设置为 true 仅上传到 Artifacts，不直接发布到 Release（除非你想发到自己的 Release 里）
+          tagName: v${{ steps.get_version.outputs.VERSION }}-intel
+          releaseName: 'Blinko ${{ steps.get_version.outputs.VERSION }} Intel Build'
+          releaseBody: '这是为 Intel Mac 用户自制的二进制版本。'
+
+      - name: 8. 归档 DMG 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: Blinko-v${{ steps.get_version.outputs.VERSION }}-Intel-Mac
+          path: app/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
