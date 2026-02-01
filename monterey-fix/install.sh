@@ -13,10 +13,14 @@ echo "🔧 Starting Monterey Compatibility Injection..."
 mkdir -p "$BLINKO_ROOT/patches"
 cp "$FIX_DIR/vite-plugin-regex-compat.ts" "$BLINKO_ROOT/app/"
 cp "$FIX_DIR/apply-patches.cjs" "$BLINKO_ROOT/patches/"
+cp "$FIX_DIR/polyfill.ts" "$BLINKO_ROOT/app/src/"
 
 # 2. 应用源码 Patch (main.tsx, Layout, globals.css)
 echo "   Applying source patches..."
-git apply --ignore-whitespace "$FIX_DIR/patches/source-fixes.patch" || echo "   ⚠️ git apply failed, trying with patch command..." && patch -p1 < "$FIX_DIR/patches/source-fixes.patch"
+git apply --ignore-whitespace "$FIX_DIR/patches/source-fixes.patch" || { 
+    echo "   ⚠️ git apply failed, trying with patch command..."
+    patch -p1 < "$FIX_DIR/patches/source-fixes.patch"
+}
 
 # 3. 修改 package.json 添加 postinstall
 echo "   Injecting postinstall script..."

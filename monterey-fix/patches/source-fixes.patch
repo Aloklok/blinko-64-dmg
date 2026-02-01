@@ -36,26 +36,15 @@ index adfdb551..638f51d9 100644
              width: '100%',
              background: getFixedHeaderBackground(),
 diff --git a/app/src/main.tsx b/app/src/main.tsx
-index c33fd758..93815b1c 100644
+index c33fd758..d3c9cb83 100644
 --- a/app/src/main.tsx
 +++ b/app/src/main.tsx
-@@ -2,6 +2,21 @@ import ReactDOM from "react-dom/client";
+@@ -1,7 +1,10 @@
++import "./polyfill";
+ import ReactDOM from "react-dom/client";
  import App from "./App";
  import "./styles/globals.css";
  
-+/**
-+ * Safari 15 Polyfill: AbortSignal.timeout
-+ * Safari 15 (macOS Monterey/iOS 15) 不支持 AbortSignal.timeout()
-+ * 这个 polyfill 让 TRPC 等库能正常工作
-+ */
-+if (typeof AbortSignal !== 'undefined' && !AbortSignal.timeout) {
-+  AbortSignal.timeout = (ms: number): AbortSignal => {
-+    const controller = new AbortController();
-+    setTimeout(() => controller.abort(new DOMException('TimeoutError', 'TimeoutError')), ms);
-+    return controller.signal;
-+  };
-+}
-+
 +
 +
  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
