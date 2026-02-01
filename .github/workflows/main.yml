@@ -2,8 +2,8 @@ name: Blinko Intel Client Builder
 
 on:
   schedule:
-    - cron: '0 0 * * *' # 每天北京时间早上 8 点自动运行
-  workflow_dispatch: # 支持你手动点按钮触发
+    - cron: '0 0 * * *' 
+  workflow_dispatch: 
     inputs:
       version:
         description: '想要构建的特定版本号 (例如 1.8.4)'
@@ -12,8 +12,8 @@ on:
 
 jobs:
   build-intel-mac:
-    # 关键点：强制使用 Intel 芯片的 macOS 13 运行环境
-    runs-on: macos-13 
+    # 修改点：使用了 2026 年推荐的最新 Intel 镜像
+    runs-on: macos-15-intel 
     permissions:
       contents: write
 
@@ -39,14 +39,14 @@ jobs:
       - name: 3. 安装 Bun 环境
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: 1.2.8 # 保持与官方一致
+          bun-version: 1.2.8 
 
       - name: 4. 安装 Rust (Intel 架构)
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-apple-darwin
 
-      - name: 5. 注入版本号到配置 (不提交)
+      - name: 5. 注入版本号到配置
         run: |
           cd app
           jq '.version = "${{ steps.get_version.outputs.VERSION }}"' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
@@ -61,14 +61,12 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 注意：这里我们故意不传入 TAURI_SIGNING 相关的 Secret
         with:
           projectPath: 'app'
           args: '--target x86_64-apple-darwin'
-          # 设置为 true 仅上传到 Artifacts，不直接发布到 Release（除非你想发到自己的 Release 里）
           tagName: v${{ steps.get_version.outputs.VERSION }}-intel
           releaseName: 'Blinko ${{ steps.get_version.outputs.VERSION }} Intel Build'
-          releaseBody: '这是为 Intel Mac 用户自制的二进制版本。'
+          releaseBody: '为 Intel Mac 用户自制的二进制版本。'
 
       - name: 8. 归档 DMG 产物
         uses: actions/upload-artifact@v4
