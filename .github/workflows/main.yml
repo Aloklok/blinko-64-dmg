@@ -66,27 +66,24 @@ jobs:
           ref: ${{ needs.check-version.outputs.target_tag }}
           fetch-depth: 1
 
-      - name: 2. 注入 Monterey 兼容性补丁 (深度正则修复)
+      - name: 2. 注入 Monterey 兼容性补丁 (深度正则手术)
         run: |
-          # 强制设置 Locale 为 C，防止处理非 ASCII 字符时报错 [cite: 2026-02-01]
           export LC_ALL=C
           
-          # 1. 降级 Vite 和 TS 目标
+          # 1. 降级构建目标 [cite: 2026-02-01]
           find . -name "vite.config.ts" -exec sed -i '' 's/target: "esnext"/target: ["es2015", "safari13"]/g' {} +
           find . -name "tsconfig.json" -exec sed -i '' 's/"target": "esnext"/"target": "es2015"/g' {} +
 
-          # 2. 修复源码中的高级正则语法
-          # 这里改用 perl，因为它在 macOS 下对正则字符串的支持比 sed 更健壮
-          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 perl -i -pe 's/\Q(?<a>\E/(/g'
-          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 perl -i -pe 's/\\k<a>/\\1/g'
-          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 perl -i -pe 's/\Q(?<b>\E/(/g'
-          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 perl -i -pe 's/\\k<b>/\\1/g'
+          # 2. 强力清理具名分组和反向断言
+          # 使用 perl 的全局搜索，不区分反斜杠数量
+          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 perl -i -pe 's/\(\?<[a-zA-Z0-9]+>/(/g'
+          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 perl -i -pe 's/\\+k<[a-zA-Z0-9]+>/\\1/g'
           
-          # 特别针对反向断言 (?<!`) 的修复：将其直接删除
-          # 它是导致老版本 WebKit 崩溃的主因
-          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 perl -i -pe 's/\(\?\<\!\\`\)//g'
+          # 暴力拆除所有反向断言 (?<!...) 和 (?<=...)，这是白屏的头号元凶
+          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 perl -i -pe 's/\(\?<![^)]+\)//g'
+          find . -type f \( -name "*.ts" -o -name "*.js" -o -name "*.tsx" \) -print0 | xargs -0 perl -i -pe 's/\(\?<= [^)]+\)//g'
           
-          echo "正则深度清理完成，已适配 Monterey 环境。"
+          echo "正则深度清理完成，已强行适配老版本 WebKit 内核。"
 
       - name: 3. 环境准备 (Bun & Rust)
         uses: oven-sh/setup-bun@v1
