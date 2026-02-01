@@ -24,27 +24,30 @@ jobs:
       - name: 1. 版本精准对账
         id: check
         run: |
-          # 始终以官方仓库的正式 Release 为准
           REPO="blinkospace/blinko"
           
+          # 获取目标版本 (处理用户输入)
           if [ -z "${{ github.event.inputs.manual_tag }}" ]; then
-            # 抓取官方最新正式发布的 Tag
             TARGET_TAG=$(curl -s https://api.github.com/repos/$REPO/releases/latest | jq -r .tag_name)
           else
-            TARGET_TAG="${{ github.event.inputs.manual_tag }}"
+            # PM 级的容错处理：统一去掉开头的 v (如果用户输入了的话)
+            TARGET_TAG=$(echo "${{ github.event.inputs.manual_tag }}" | sed 's/^v//')
           fi
           
           echo "确定目标版本: $TARGET_TAG"
           
-          # 检查你的仓库是否已经发布过这个版本的 -intel 包
+          # 检查你的仓库中是否已有该版本的 -intel 包 [cite: 2026-02-01]
           CHECK_URL="https://api.github.com/repos/${{ github.repository }}/releases/tags/${TARGET_TAG}-intel"
           STATUS=$(curl -o /dev/null -s -w "%{http_code}" $CHECK_URL)
           
+          # 核心决策逻辑：(不存在) OR (强制构建)
           if [ "$STATUS" != "200" ] || [ "${{ github.event.inputs.force_build }}" == "true" ]; then
             echo "should_build=true" >> $GITHUB_OUTPUT
             echo "target_tag=$TARGET_TAG" >> $GITHUB_OUTPUT
+            echo "决策：启动构建 [cite: 2026-02-01]"
           else
             echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "决策：跳过构建 [cite: 2026-02-01]"
           fi
 
   build-intel-mac:
